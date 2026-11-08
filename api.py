@@ -1,7 +1,7 @@
 """AgniLens JSON API. FIRMS_MAP_KEY stays server-side; never returned to the browser."""
 import html, json, logging, math, os, threading
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, Response, jsonify, request
 
@@ -155,6 +155,16 @@ def map_obs():
     start, end = _date_range()
     if start:
         q, a = q + " AND acq_date>=? AND acq_date<=?", a + [start, end]
+    since = request.args.get("since")
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            if since_dt.tzinfo is None:
+                raise ValueError
+            since = since_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError as ex:
+            raise ValueError("since must be an ISO timestamp with a timezone") from ex
+        q, a = q + " AND acq_utc>=?", a + [since]
     raw_sensors = request.args.get("sensor", "MODIS,VIIRS").split(",")
     sensors = [x.strip() for x in raw_sensors]
     if not sensors or any(x not in ("MODIS", "VIIRS") for x in sensors):
@@ -172,6 +182,97 @@ def map_obs():
     c.close()
     return jsonify({"scope": scope, "total_matching": total, "returned": len(rows), "thinned_every": k,
                     "observations": [dict(r) for r in rows]})
+
+
+@bp.route("/api/activity")
+def activity():
+    """Observed detections by hour/day; uncovered buckets are null, never invented zeros."""
+    scope, region_id = _scope_region()
+    period = request.args.get("range", "30d")
+    sensors = [sensor.strip() for sensor in request.args.get("sensor", "MODIS,VIIRS").split(",")]
+    if not sensors or any(sensor not in ("MODIS", "VIIRS") for sensor in sensors) or len(set(sensors)) != len(sensors):
+        raise ValueError("sensor must be a comma-separated list containing MODIS and/or VIIRS")
+    now = datetime.now(timezone.utc)
+    if period == "24h":
+        hourly = True
+        window_start = now - timedelta(hours=24)
+        first = window_start.replace(minute=0, second=0, microsecond=0)
+        last_hour = now.replace(minute=0, second=0, microsecond=0)
+        start, end = window_start.date().isoformat(), now.date().isoformat()
+        bucket_count = int((last_hour - first).total_seconds() // 3600) + 1
+        buckets = [first + timedelta(hours=i) for i in range(bucket_count)]
+        sql_group = "substr(acq_utc,1,13) || ':00:00Z'"
+        start_utc, end_utc = window_start.strftime("%Y-%m-%dT%H:%M:%SZ"), now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    elif period in ("7d", "30d", "90d"):
+        hourly = False
+        days = int(period[:-1])
+        first_day = now.date() - timedelta(days=days - 1)
+        start, end = first_day.isoformat(), now.date().isoformat()
+        buckets = [first_day + timedelta(days=i) for i in range(days)]
+        sql_group = "acq_date"
+        start_utc, end_utc = start + "T00:00:00Z", end + "T23:59:59Z"
+    elif period == "custom":
+        hourly = False
+        start, end = _date_range(require_both=True)
+        first_day, last_day = date.fromisoformat(start), date.fromisoformat(end)
+        if last_day < first_day or last_day - first_day > timedelta(days=364):
+            raise ValueError("Custom activity range must be between 1 and 365 days")
+        if last_day > now.date():
+            raise ValueError("Activity end date cannot be in the future")
+        days = (last_day - first_day).days + 1
+        buckets = [first_day + timedelta(days=i) for i in range(days)]
+        sql_group = "acq_date"
+        start_utc, end_utc = start + "T00:00:00Z", end + "T23:59:59Z"
+    else:
+        raise ValueError("range must be 24h, 7d, 30d, 90d or custom")
+
+    c = db.connect()
+    reg, sc = analytics.get_region(c, region_id), db.scope_clause(scope)
+    w, s, e, n = reg["west"], reg["south"], reg["east"], reg["north"]
+    rows = c.execute(
+        f"SELECT {sql_group} bucket,sensor,COUNT(*) total,"
+        "SUM(CASE WHEN (sensor='MODIS' AND CAST(confidence_raw AS REAL)>=80) "
+        "OR (sensor='VIIRS' AND lower(trim(confidence_raw)) IN ('h','high')) THEN 1 ELSE 0 END) high "
+        f"FROM satellite_observations WHERE {sc} AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? "
+        "AND acq_utc BETWEEN ? AND ? AND sensor IN (" + ",".join("?" for _ in sensors) + ") GROUP BY bucket,sensor",
+        (s, n, w, e, start_utc, end_utc, *sensors),
+    ).fetchall()
+    observed = {(r["bucket"], r["sensor"]): (r["total"], r["high"]) for r in rows}
+    coverage = analytics.coverage_ranges(c, scope, reg)
+    series = []
+    for bucket in buckets:
+        label = bucket.strftime("%Y-%m-%dT%H:00:00Z") if hourly else bucket.isoformat()
+        item = {"date": label}
+        day = label[:10]
+        for sensor, key in (("MODIS", "modis"), ("VIIRS", "viirs")):
+            value = observed.get((label, sensor))
+            state = analytics.cov_state(coverage[sensor], day)
+            item[key] = value[0] if value else (0 if sensor in sensors and state == "confirmed" else None)
+            item[key + "_high"] = value[1] if value else (0 if sensor in sensors and state == "confirmed" else None)
+        series.append(item)
+
+    total = sum(r["total"] for r in rows)
+    high = sum(r["high"] for r in rows)
+    regions = c.execute("SELECT * FROM regions").fetchall()
+    active_regions = 0
+    for candidate in regions:
+        count = c.execute(
+            f"SELECT 1 FROM satellite_observations WHERE {sc} AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? "
+            "AND acq_utc BETWEEN ? AND ? AND sensor IN (" + ",".join("?" for _ in sensors) + ") LIMIT 1",
+            (candidate["south"], candidate["north"], candidate["west"], candidate["east"], start_utc, end_utc, *sensors),
+        ).fetchone()
+        active_regions += bool(count)
+    latest = c.execute(
+        f"SELECT MAX(acq_utc) FROM satellite_observations WHERE {sc} AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? "
+        "AND acq_utc BETWEEN ? AND ? AND sensor IN (" + ",".join("?" for _ in sensors) + ")",
+        (s, n, w, e, start_utc, end_utc, *sensors),
+    ).fetchone()[0]
+    c.close()
+    return jsonify({"scope": scope, "region": region_id, "range": period, "granularity": "hour" if hourly else "day",
+                    "start": start, "end": end, "start_utc": start_utc, "sensors": sensors, "series": series,
+                    "summary": {"total": total, "high_confidence": high, "active_regions": active_regions,
+                                "latest_observation": latest},
+                    "confidence_note": "High confidence means MODIS raw confidence ≥80 or VIIRS raw confidence h/high; these sensor scales are not equivalent."})
 
 
 @bp.post("/api/import")

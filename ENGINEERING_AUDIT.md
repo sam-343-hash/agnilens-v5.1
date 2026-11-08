@@ -33,3 +33,8 @@ Shapefiles remain unsupported; CSV, JSON and GeoJSON are supported. Archive file
 ## Verification
 
 `TEST_RESULTS.md` records the full 86-test pass. Browser inspection opened all ten routed pages at `http://127.0.0.1:5001/`; each returned its expected heading and no browser-console errors were observed during initial rendering. This was a route/render smoke check, not a full interaction E2E run. See `MANUAL_QA_GUIDE.md` for steps that require live data or broader manual interaction.
+
+
+## Dashboard redesign addition
+
+The Overview now requests actual stored observations through /api/activity. It returns hourly/daily counts, high-confidence groups and selected-period summary metrics. Missing buckets remain null unless they fall inside confirmed declared coverage, where they are zero. The existing map endpoint accepts an optional timezone-qualified since timestamp for matching rolling 24-hour filters. Confidence classification is explicitly documented as MODIS raw value >=80 and VIIRS h/high; it is not calibrated across sensors. See docs/DASHBOARD.md. An isolated synthetic preview was used for browser checks; no live archive or NASA request was used.

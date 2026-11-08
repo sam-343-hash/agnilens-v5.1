@@ -8,7 +8,7 @@ from unittest.mock import patch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from test_agnilens import Base, HDR_V, viirs  # noqa: E402
+from test_agnilens import Base, HDR_M, HDR_V, modis, viirs  # noqa: E402
 import app as flask_app  # noqa: E402
 import db  # noqa: E402
 import importer  # noqa: E402
@@ -28,6 +28,57 @@ class TestAuditRegressions(Base):
         self.assertEqual(r["total"], 1)
         self.assertEqual(r["by_source"][0]["last"], "2024-11-05")
         self.assertEqual(r["provenance"][0]["links"], 1)
+
+    def test_activity_timeline_uses_observations_scope_and_confidence(self):
+        self.imp(HDR_V + viirs(30, 75, "2024-11-05", time="0810", conf="h") +
+                 viirs(30.1, 75, "2024-11-05", time="0820", conf="n"),
+                 bbox=db.STUDY_BBOX, cov_start="2024-11-05", cov_end="2024-11-05")
+        self.imp(HDR_M + modis(30.2, 75, "2024-11-05", time="0840", conf="90"),
+                 name="modis.csv", bbox=db.STUDY_BBOX, cov_start="2024-11-05", cov_end="2024-11-05")
+        self.imp(HDR_V + viirs(30, 75, "2024-11-05", time="0900", conf="h"),
+                 name="demo.csv", origin="demo", bbox=db.STUDY_BBOX,
+                 cov_start="2024-11-05", cov_end="2024-11-05")
+        response = self.client.get("/api/activity?scope=nasa&region=in-pb-hr&range=custom"
+                                   "&start=2024-11-05&end=2024-11-05&sensor=MODIS,VIIRS")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        result = response.get_json()
+        day = result["series"][0]
+        self.assertEqual((day["modis"], day["modis_high"], day["viirs"], day["viirs_high"]), (1, 1, 2, 1))
+        self.assertEqual(result["summary"]["total"], 3)
+        self.assertEqual(result["summary"]["high_confidence"], 2)
+        self.assertEqual(result["summary"]["active_regions"], 4)
+        self.assertEqual(result["series"][0]["date"], "2024-11-05")
+        demo = self.client.get("/api/activity?scope=demo&region=in-pb-hr&range=custom"
+                               "&start=2024-11-05&end=2024-11-05")
+        self.assertEqual(demo.status_code, 200)
+        self.assertEqual(demo.get_json()["summary"]["total"], 1)
+        modis_only = self.client.get("/api/activity?scope=nasa&region=in-pb-hr&range=custom"
+                                     "&start=2024-11-05&end=2024-11-05&sensor=MODIS")
+        self.assertEqual(modis_only.get_json()["summary"]["total"], 1)
+        self.assertIsNone(modis_only.get_json()["series"][0]["viirs"])
+
+    def test_activity_range_and_map_since_validation(self):
+        invalid = ["/api/activity?range=other", "/api/activity?range=custom&start=2024-01-01",
+                   "/api/activity?range=custom&start=2024-01-01&end=2024-01-01&sensor=NOAA"]
+        for path in invalid:
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 400)
+        self.assertEqual(self.client.get("/api/map/observations?since=not-a-date").status_code, 400)
+        hourly = self.client.get("/api/activity?range=24h&sensor=VIIRS")
+        self.assertEqual(hourly.status_code, 200, hourly.get_data(as_text=True))
+        self.assertEqual(hourly.get_json()["granularity"], "hour")
+        self.assertGreaterEqual(len(hourly.get_json()["series"]), 24)
+        self.assertLessEqual(len(hourly.get_json()["series"]), 25)
+
+    def test_map_since_filters_subdaily_observations(self):
+        self.imp(HDR_V + viirs(30, 75, "2024-11-05", time="0800") +
+                 viirs(30.1, 75, "2024-11-05", time="0830"), bbox=db.STUDY_BBOX)
+        response = self.client.get("/api/map/observations?start=2024-11-05&end=2024-11-05"
+                                   "&since=2024-11-05T08%3A15%3A00Z")
+        result = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(result["total_matching"], 1)
+        self.assertEqual(result["observations"][0]["acq_utc"], "2024-11-05T08:30:00Z")
 
     def test_nonfinite_and_partial_query_values_return_clear_400(self):
         requests = [
@@ -115,6 +166,7 @@ class TestAuditRegressions(Base):
         oid = self.conn.execute("SELECT id FROM satellite_observations ORDER BY id LIMIT 1").fetchone()[0]
         checks = [
             ("GET", "/api/health"), ("GET", "/api/regions"), ("GET", "/api/overview?region=in-pb-hr"),
+            ("GET", "/api/activity?range=30d&sensor=MODIS,VIIRS"),
             ("GET", "/api/map/observations?start=2024-11-01&end=2024-11-30"),
             ("GET", "/api/imports"), ("GET", f"/api/imports/{iid}"),
             ("GET", f"/api/observations/{oid}/sources"), ("GET", "/api/calendar?year=2024"),

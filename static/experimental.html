@@ -18,7 +18,7 @@ header{display:flex;justify-content:space-between;align-items:center;gap:12px;ma
 .brand{font:700 1.15rem "Bricolage Grotesque",sans-serif;letter-spacing:-.01em}
 .live{font-size:.85rem;color:var(--muted)}
 .live i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--risk);margin-right:6px}
-#banner{display:none;background:#fff3cd;border:1px solid #e6c65a;border-radius:10px;padding:8px 12px;margin-bottom:16px;font-size:.9rem}
+#expBanner{display:none}
 .hero{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:22px;align-items:stretch}
 .panel{background:var(--panel);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:22px;padding:26px 26px 22px;display:flex;flex-direction:column}
 h1{font:800 clamp(1.7rem,3.2vw,2.3rem)/1.08 "Bricolage Grotesque",sans-serif;letter-spacing:-.02em;margin:0 0 6px}
@@ -49,11 +49,11 @@ footer{margin-top:36px;font-size:.8rem;color:var(--muted);max-width:70ch}
 @media(prefers-reduced-motion:reduce){.flow{animation:none}}
 :focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 @media(max-width:820px){.hero{grid-template-columns:1fr}.mapbox{min-height:380px}}
-</style></head>
+</style><link rel="stylesheet" href="/shared.css"></head>
 <body><div style="background:#4a3410;color:#FFB547;padding:10px 16px;font:600 14px system-ui"><a href="/" style="color:#FFB547">← AgniLens</a> &nbsp; EXPERIMENTAL Smoke Transport Analysis: an unvalidated heuristic, not an official forecast. It is separate from the AgniLens harmonization workflow.</div>
 <div class="wrap">
 <header><div class="brand">Stubble Watch Delhi</div><div class="live"><i></i><span id="stamp">Loading NASA data…</span></div></header>
-<div id="banner" role="status" aria-live="polite">Showing synthetic demo data. Set FIRMS_MAP_KEY to retrieve live NASA satellite detections.</div>
+<div id="expBanner" class="experimental-warning" role="status" aria-live="polite">Showing synthetic demo data. Set FIRMS_MAP_KEY to retrieve live NASA satellite detections.</div>
 
 <div class="hero">
  <div class="panel">
@@ -88,8 +88,8 @@ footer{margin-top:36px;font-size:.8rem;color:var(--muted);max-width:70ch}
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/shared.js"></script>
 <script>
-const $=id=>document.getElementById(id);
 const cls=s=>s<35?'':s<65?'mod':'high';
 const colr=s=>s<35?'#1f8a70':s<65?'#d99a1f':'#c0301b';
 const fmt=t=>new Date(t).toLocaleString('en-IN',{weekday:'short',hour:'numeric',hour12:true});
@@ -98,13 +98,13 @@ mod:[['Children and elderly','Limit long outdoor stays, especially in the mornin
 high:[['Everyone outdoors','Wear a fitted N95 mask. Cloth and surgical masks do not stop fine smoke.'],['Schools','Move sports and assembly indoors.'],['Homes','Keep windows shut and run air purifiers on the highest setting.']]};
 let map,layer;
 function load(){fetch('/api/status').then(r=>r.json()).then(d=>{
- const n=d.now,L=d.level.toLowerCase();
- document.body.className=cls(n.risk);
- $('banner').style.display=(d.demo||d.fire_partial_failure)?'block':'none';
- $('banner').textContent=d.fire_data_mode==='synthetic'?'Showing synthetic demonstration data. It is not NASA data and does not describe real fires.':d.fire_partial_failure?'Partial NASA retrieval: '+d.fire_sources.filter(x=>x.status==='error').map(x=>x.source).join(', ')+' failed. The fire count may be incomplete.':'This experimental smoke-transport estimate is not an operational air-quality forecast.';
+ const n=d.now,levelName=d.level.toLowerCase();
+ document.body.classList.remove('mod','high');if(cls(n.risk))document.body.classList.add(cls(n.risk));
+ $('expBanner').style.display=(d.demo||d.fire_partial_failure)?'block':'none';
+ $('expBanner').textContent=d.fire_data_mode==='synthetic'?'Showing synthetic demonstration data. It is not NASA data and does not describe real fires.':d.fire_partial_failure?'Partial NASA retrieval: '+d.fire_sources.filter(x=>x.status==='error').map(x=>x.source).join(', ')+' failed. The fire count may be incomplete.':'This experimental smoke-transport estimate is not an operational air-quality forecast.';
  const fetched=d.fire_retrieved_at?new Date(d.fire_retrieved_at).toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit'}):'retrieval unavailable';
  $('stamp').textContent=(d.fire_data_mode==='synthetic'?'Synthetic demonstration':d.fire_partial_failure?'Partial NASA data':'Live NASA fire data')+' · retrieved '+fetched+(d.fire_cached?' · cached':'');
- $('head').textContent=L==='high'?'Smoke is likely to reach Delhi':L==='moderate'?'Some smoke may reach Delhi':'Delhi’s air looks clear of farm smoke';
+ $('head').textContent=levelName==='high'?'Smoke is likely to reach Delhi':levelName==='moderate'?'Some smoke may reach Delhi':'Delhi’s air looks clear of farm smoke';if($('pageTitle'))$('pageTitle').textContent='Experimental smoke-transport analysis';
  $('score').textContent=n.risk;$('adv').textContent=d.advice;
  $('fc').textContent=d.fire_count.toLocaleString('en-IN');
  if(d.fire_data_mode==='live'&&!d.fire_partial_failure&&d.fire_count===0)$('adv').textContent+=' NASA reported no fires in the retrieved data window. Satellite coverage can be incomplete.';
@@ -114,7 +114,7 @@ function load(){fetch('/api/status').then(r=>r.json()).then(d=>{
  for(let i=0;i+6<=H.length;i++){const a=H.slice(i,i+6).reduce((s,h)=>s+h.risk,0)/6;if(i==0||a<best){best=a;bi=i}}
  $('clean').textContent=fmt(H[bi].t);
  // map
- if(typeof L==='undefined'){$('map').textContent='The interactive map library could not load. The risk readout and time series are still available.'}
+ if(typeof window.L==='undefined'){$('map').textContent='The interactive map library could not load. The risk readout and time series are still available.'}
  else{if(!map){map=L_init(d)}
  if(layer)layer.remove();layer=L.layerGroup().addTo(map);
  d.fires.forEach(f=>L.circleMarker([f.lat,f.lon],{radius:3+Math.min(f.frp,40)/10,color:'#ff7a1a',weight:0,fillColor:'#e8420c',fillOpacity:.55}).addTo(layer));
@@ -130,9 +130,9 @@ function load(){fetch('/api/status').then(r=>r.json()).then(d=>{
    $('readout').innerHTML='<b>'+fmt(h.t)+'</b> · risk '+h.risk+' · wind '+Math.round(h.speed)+' km/h from '+Math.round(h.dir)+'° · PM2.5 '+(h.pm25==null?'n/a':Math.round(h.pm25)+' µg/m³')};
   c.onclick=show;c.onfocus=show;c.onmouseenter=show;c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();show()}};$('ribbon').appendChild(c)});
  $('axis').innerHTML='<span>'+fmt(H[0].t)+'</span><span>'+fmt(H[Math.floor(H.length/2)].t)+'</span><span>'+fmt(H[H.length-1].t)+'</span>';
- $('tips').innerHTML=TIPS[L].map(t=>'<div class="tip"><b>'+t[0]+'</b>'+t[1]+'</div>').join('');
-}).catch(e=>{$('stamp').textContent='Data unavailable';$('banner').style.display='block';$('banner').textContent='Could not load experimental data: '+String(e.message||e)})}
+ $('tips').innerHTML=TIPS[levelName].map(t=>'<div class="tip"><b>'+t[0]+'</b>'+t[1]+'</div>').join('');
+}).catch(e=>{$('stamp').textContent='Data unavailable';$('expBanner').style.display='block';$('expBanner').textContent='Could not load experimental data: '+String(e.message||e)})}
 function L_init(d){const m=L.map('map',{zoomControl:true,scrollWheelZoom:false}).setView([30.2,76.3],6);
  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:12}).addTo(m);return m}
-load();setInterval(load,600000);
+shell().then(()=>{load();setInterval(load,600000)}).catch(e=>{$('stamp').textContent='Navigation unavailable';$('expBanner').style.display='block';$('expBanner').textContent='Could not load the shared navigation: '+esc(e.message)});
 </script></body></html>

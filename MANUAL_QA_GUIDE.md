@@ -1,8 +1,12 @@
 # Manual QA guide
 
-## Browser smoke check performed
+## Browser checks performed
 
-On 2026-11-08, the local app at `http://127.0.0.1:5001` was opened in the Codex in-app browser. Overview, Data, Harmonization, Calendar, Map, MODIS vs VIIRS, Anomalies, Regions, Reports and Experimental each rendered a page heading; no console errors were present during the initial route check. Overview displayed the three onboarding routes and separate NASA/demo scope notice. A screenshot of this actual page was captured in the task session. This check did not submit forms or mutate the local database.
+On 2026-11-08, the redesign was opened at http://127.0.0.1:5002 against an isolated temporary SQLite database containing 13 clearly synthetic demo observations; the user local database was not touched. Overview, Global Map, Harmonization, Data Explorer, Calendar, Compare, Anomalies, Regional Analytics, Reports and Experimental rendered with the shared sidebar and the expected active link. No browser console errors were present after correcting an Experimental-page map variable collision.
+
+On Overview, the NASA scope showed an empty state while the demo scope showed demo-labeled counts, a timeline and clustered map observations. The 24-hour and custom date ranges updated the chart/map; toggling sensor filters updated the totals; the heat layer could be enabled; Reset returned to the default 30-day view. The desktop sidebar collapsed to 76 pixels and expanded again. Actual desktop screenshots were captured in the task session.
+
+Responsive browser checks were performed at 1440×900, 1024×900, 768×900 and 390×844. At each width, the document and body stayed within the viewport width; at 390 pixels the main content was 390 pixels and the map was 362 pixels. The mobile menu opened the drawer, and Escape closed it and reset aria-expanded. This manual check did not submit archive/NASA forms or mutate the user local database.
 
 ## Repeatable manual journeys
 
