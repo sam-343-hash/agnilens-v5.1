@@ -29,18 +29,40 @@ def parse_records(filename, content):
     if name.endswith((".json", ".geojson")):
         data = json.loads(text)
         if isinstance(data, dict) and "features" in data:
+            if not isinstance(data["features"], list):
+                raise ValueError("GeoJSON 'features' must be an array.")
             out = []
             for f in data["features"]:
-                p, c = dict(f.get("properties") or {}), (f.get("geometry") or {}).get("coordinates") or []
-                if len(c) >= 2:
+                if not isinstance(f, dict):
+                    raise ValueError("Every GeoJSON feature must be an object.")
+                props = f.get("properties") or {}
+                if not isinstance(props, dict):
+                    raise ValueError("GeoJSON feature properties must be an object.")
+                p = dict(props)
+                geometry = f.get("geometry") or {}
+                if not isinstance(geometry, dict):
+                    raise ValueError("GeoJSON feature geometry must be an object or null.")
+                coords = geometry.get("coordinates") or []
+                if geometry.get("type") in (None, "Point") and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                    c = coords
                     p.setdefault("longitude", c[0])
                     p.setdefault("latitude", c[1])
                 out.append(p)
             return out
         if isinstance(data, dict):
-            data = data.get("data") or data.get("records") or []
-        return list(data)
-    return list(csv.DictReader(io.StringIO(text)))
+            data = data.get("data", data.get("records"))
+        if not isinstance(data, list):
+            raise ValueError("JSON must contain an array of FIRMS records, or a GeoJSON FeatureCollection.")
+        if any(not isinstance(row, dict) for row in data):
+            raise ValueError("Every JSON record must be an object.")
+        return data
+    reader = csv.DictReader(io.StringIO(text))
+    fields = {str(field or "").strip().lower() for field in (reader.fieldnames or [])}
+    required = {"latitude", "longitude", "acq_date", "acq_time"}
+    missing = sorted(required - fields)
+    if missing:
+        raise ValueError("CSV is missing required FIRMS columns: " + ", ".join(missing))
+    return list(reader)
 
 
 def validate_firms_csv(text):

@@ -12,7 +12,7 @@ python -m unittest discover -s tests
 ```
 For persistent local configuration, copy `.env.example` to `.env` and add your FIRMS key there. `.env` is git-ignored and loaded on startup; a value already set in the shell takes precedence. Windows PowerShell can instead set `$env:FIRMS_MAP_KEY="your_key"`. The local development server uses port **5001** by default (`PORT` can change it). Debug mode is off unless explicitly enabled for local development.
 
-The repo is a Flask app with static HTML/JavaScript and SQLite; there is no separate frontend build step. Uploads are limited to 50 MiB and accepted formats are CSV, JSON and GeoJSON.
+The repo is a Flask app with static HTML/JavaScript and SQLite; there is no separate frontend build step. Uploads are limited to 50 MiB and accepted formats are CSV, JSON and GeoJSON. The monitoring overview uses saved observations for the selected scope and region; see docs/DASHBOARD.md for the activity API and confidence definitions.
 
 ### If your virtual environment is corrupted
 
@@ -49,5 +49,5 @@ FIRMS file imports retain source and platform labels but cannot independently pr
   (extent values: `in-punjab`, `in-haryana`, `in-pb-hr`, `in-all`, or `custom` with `west`, `south`, `east`, `north`).
 
 ## Docs
-`docs/METHODOLOGY.md` (equations, assumptions and limits), `docs/ARCHITECTURE.md`, `docs/DATA_DICTIONARY.md`, `docs/SCIENTIFIC_VALIDATION.md`, `BUILD_REPORT.md`.
+`docs/METHODOLOGY.md` (equations, assumptions and limits), `docs/ARCHITECTURE.md`, `docs/DATA_DICTIONARY.md`, `docs/SCIENTIFIC_VALIDATION.md`, `docs/DASHBOARD.md`, `BUILD_REPORT.md`.
 The old Stubble Watch heuristic is kept as **Experimental** (`/experimental`) and is unvalidated.

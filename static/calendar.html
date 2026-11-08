@@ -3,8 +3,8 @@
 .two{display:grid;grid-template-columns:1fr 320px;gap:16px}@media(max-width:900px){.two{grid-template-columns:1fr}}svg rect{cursor:pointer}</style></head><body>
 <div class="wrap"><h1>Historical Fire Calendar</h1>
 <p class="muted">Each square is one UTC day. Colour shows the number of satellite detections (not individual fires), ranked within the selected year. Days with no data loaded are hatched, never drawn as zero.</p>
-<div class="card"><div class="row"><div><label>Year</label><select id="year"></select></div><div><label>Intensity based on</label><select id="metric"><option value="viirs">VIIRS detections</option><option value="modis">MODIS detections</option><option value="sum">MODIS + VIIRS raw detections (both must have data)</option></select></div>
-<div><label>Month detail</label><select id="month"></select></div></div></div>
+<div class="card"><div class="row"><div><label for="year">Year</label><select id="year"></select></div><div><label for="metric">Intensity based on</label><select id="metric"><option value="viirs">VIIRS detections</option><option value="modis">MODIS detections</option><option value="sum">MODIS + VIIRS raw detections (both must have data)</option></select></div>
+<div><label for="month">Month detail</label><select id="month"></select></div></div></div>
 <div id="out"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script><script src="/shared.js"></script><script>
 const COL=['#16304a','#7c4a03','#c26a0a','#ee5a24','#ff2d2d'];let CAL=null;
@@ -17,14 +17,17 @@ function draw(){const days=CAL.days,off=new Date(days[0].date+'T00:00:00Z').getU
  ['Mon','Wed','Fri'].forEach((n,i)=>s+='<text x="0" y="'+(30+i*34)+'" font-size="8" fill="#9AA9BC">'+n+'</text>');
  days.forEach((d,i)=>{const k=i+off,x=26+Math.floor(k/7)*17,y=18+(k%7)*16,fill=d.level==null?(d.value_state==='assumed_coverage'?'url(#a)':'url(#h)'):COL[d.level];
   if(d.date.endsWith('-01'))s+='<text x="'+x+'" y="10" font-size="8" fill="#9AA9BC">'+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+d.date.slice(5,7)-1]+'</text>';
-  s+='<rect data-i="'+i+'" x="'+x+'" y="'+y+'" width="13" height="13" rx="2" fill="'+fill+'" stroke="#22324a" stroke-width=".5"><title>'+d.date+'</title></rect>'});
- $('cal').innerHTML=s+'</svg>';$('cal').querySelectorAll('rect[data-i]').forEach(r=>r.onclick=()=>detail(days[r.dataset.i]))}
+  s+='<rect data-i="'+i+'" tabindex="0" role="button" aria-label="'+d.date+': '+esc(d.value_state)+'" x="'+x+'" y="'+y+'" width="13" height="13" rx="2" fill="'+fill+'" stroke="#22324a" stroke-width=".5"><title>'+d.date+'</title></rect>'});
+ $('cal').innerHTML=s+'</svg>';$('cal').querySelectorAll('rect[data-i]').forEach(r=>{const show=()=>detail(days[+r.dataset.i]);r.onclick=show;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();show()}}})}
 function monthTable(){const m=$('month').value;if(!m){$('mt').innerHTML='';return}
  $('mt').innerHTML='<tr><th>Date</th><th>MODIS</th><th>MODIS FRP mean/max</th><th>VIIRS</th><th>VIIRS FRP mean/max</th><th>Groups</th></tr>'+CAL.days.filter(d=>d.date.slice(5,7)===m).map(d=>'<tr><td>'+d.date+'</td><td>'+cnt(d.modis)+'</td><td>'+f1(d.modis.frp_mean)+' / '+f1(d.modis.frp_max)+'</td><td>'+cnt(d.viirs)+'</td><td>'+f1(d.viirs.frp_mean)+' / '+f1(d.viirs.frp_max)+'</td><td>'+(d.candidate_groups??'–')+'</td></tr>').join('')}
-let chart;async function multi(){const ys=[...document.querySelectorAll('.yc:checked')].map(c=>c.value);if(!ys.length)return;
- const m=(await api('/api/monthly?'+qs({years:ys.join(',')}))).months,sen=$('metric').value==='modis'?'modis':'viirs';
- if(chart)chart.destroy();chart=new Chart($('mc'),{type:'line',data:{labels:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],datasets:ys.map((y,i)=>({label:y,spanGaps:false,tension:.25,borderColor:['#36BFFA','#22D3A6','#FFB547','#FF5B5B','#b794f6','#f472b6','#94a3b8'][i%7],data:m.filter(x=>x.month.startsWith(y)).map(x=>x[sen].coverage>=.8?x[sen].count:null)}))},
-  options:{plugins:{legend:{labels:{color:'#F4F7FB'}}},scales:{x:{ticks:{color:'#9AA9BC'}},y:{ticks:{color:'#9AA9BC'},title:{display:true,text:sen.toUpperCase()+' detections per month',color:'#9AA9BC'}}}}})}
+let chart;async function multi(){const ys=[...document.querySelectorAll('.yc:checked')].map(c=>c.value);if(!ys.length||!$('mc'))return;
+ const m=(await api('/api/monthly?'+qs({years:ys.join(',')}))).months,metric=$('metric').value,sensors=metric==='sum'?['modis','viirs']:[metric];
+ if(typeof Chart==='undefined'){$('mc').outerHTML='<p class="muted">Chart.js could not load. Monthly values remain available in the Calendar details.</p>';return}
+ if(chart)chart.destroy();const colors=['#36BFFA','#22D3A6','#FFB547','#FF5B5B','#b794f6','#f472b6','#94a3b8'];
+ const datasets=ys.flatMap((y,i)=>sensors.map((sen,j)=>({label:metric==='sum'?y+' '+sen.toUpperCase():y,spanGaps:false,tension:.25,borderColor:colors[(i*sensors.length+j)%colors.length],borderDash:metric==='sum'&&sen==='viirs'?[5,4]:[],data:m.filter(x=>x.month.startsWith(y)).map(x=>x[sen].coverage>=.8?x[sen].count:null)})));
+ chart=new Chart($('mc'),{type:'line',data:{labels:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],datasets},
+  options:{plugins:{legend:{labels:{color:'#F4F7FB'}}},scales:{x:{ticks:{color:'#9AA9BC'}},y:{ticks:{color:'#9AA9BC'},title:{display:true,text:sensors.map(s=>s.toUpperCase()).join(' + ')+' detections per month',color:'#9AA9BC'}}}}})}
 async function load(){CAL=await api('/api/calendar?'+qs({year:$('year').value,metric:$('metric').value}));
  const c=CAL.coverage_summary,wn=CAL.warnings.length?'<p style="color:var(--warn)"><b>Warning:</b> '+CAL.warnings.map(esc).join(' ')+' Declare coverage dates on import to confirm.</p>':'';
  $('out').innerHTML='<div class="two"><div class="card"><h2>'+CAL.year+'</h2><div id="cal" style="overflow-x:auto"></div><div class="legend" style="margin-top:8px"><span><i style="background:#16304a"></i>zero detections (data loaded)</span><span><i style="background:#7c4a03"></i>low</span><span><i style="background:#c26a0a"></i></span><span><i style="background:#ee5a24"></i></span><span><i style="background:#ff2d2d"></i>high</span><span><i style="background:repeating-linear-gradient(45deg,#0b1220,#0b1220 3px,#33445f 3px,#33445f 4px)"></i>no data loaded</span><span><i style="background:radial-gradient(#FFB547 30%,#2a2412 32%)"></i>assumed coverage (zero not confirmed)</span></div>'+
