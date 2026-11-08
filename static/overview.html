@@ -8,7 +8,7 @@
 <div id="content"></div></div>
 <script src="/shared.js"></script><script>
 shell().then(async()=>{const d=await api('/api/overview?'+qs());
-if(!d.total){$('content').innerHTML=EMPTY;return}
+if(!d.total){$('content').innerHTML='<div class="card onboarding"><h2>Start with a dataset</h2><p class="muted">Choose one route below. NASA observations and synthetic demo records stay in separate scopes.</p><div class="grid"><div><b>1 · Retrieve current NASA data</b><p class="muted">Use FIRMS NRT with your server-side map key.</p><a class="btn" href="/data#nrt-section">Set up NASA retrieval</a></div><div><b>2 · Import an archive</b><p class="muted">Upload FIRMS CSV or GeoJSON and declare its coverage and extent.</p><a class="btn sec" href="/data#import">Import archive</a></div><div><b>3 · Explore a demo</b><p class="muted">Load clearly labelled synthetic records to try the interface.</p><a class="btn sec" href="/data#demo-section">Load demo data</a></div></div></div>';return}
 const cov=s=>d.coverage[s].length?d.coverage[s].map(r=>r[0]+' to '+r[1]+(r[2]?'':' (assumed)')).join('; '):'none loaded';
 $('content').innerHTML='<div class="card"><div class="grid"><div class="stat"><b>'+d.totals.MODIS.toLocaleString()+'</b><small>MODIS detections</small></div>'+
 '<div class="stat"><b>'+d.totals.VIIRS.toLocaleString()+'</b><small>VIIRS detections</small></div><div class="stat"><b>'+d.by_source.length+'</b><small>sensor/satellite sources</small></div>'+

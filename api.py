@@ -6,10 +6,29 @@ from datetime import date, datetime, timezone
 from flask import Blueprint, Response, jsonify, request
 
 import analytics, db, demo_data, importer
+from werkzeug.utils import secure_filename
 
 log = logging.getLogger("agnilens.api")
 bp = Blueprint("agnilens", __name__)
 KEY = lambda: os.getenv("FIRMS_MAP_KEY", "")
+_IMPORT_SLOTS = threading.BoundedSemaphore(2)
+
+
+def _background_import(*args):
+    iid = args[6]
+    try:
+        importer.import_file(*args)
+    except Exception as ex:
+        log.exception("background import worker failed")
+        c = db.connect()
+        try:
+            c.execute("UPDATE data_imports SET status='error',error=?,finished_at=? WHERE id=?",
+                      (str(ex)[:300], db.now(), iid))
+            c.commit()
+        finally:
+            c.close()
+    finally:
+        _IMPORT_SLOTS.release()
 
 
 def _scope_region():
@@ -22,15 +41,55 @@ def _scope_region():
 def _d(name, default=None):
     v = request.args.get(name, default)
     if v:
-        datetime.strptime(v, "%Y-%m-%d")
+        try:
+            if date.fromisoformat(v).isoformat() != v:
+                raise ValueError
+        except ValueError as ex:
+            raise ValueError(f"{name} must be a real date in YYYY-MM-DD format") from ex
     return v
 
 
 def _num(name, default, lo, hi):
     try:
-        return min(max(float(request.args.get(name, default)), lo), hi)
-    except ValueError:
+        value = float(request.args.get(name, default))
+        if not math.isfinite(value):
+            raise ValueError
+        return min(max(value, lo), hi)
+    except (TypeError, ValueError):
         raise ValueError(f"{name} must be a number")
+
+
+def _date_range(require_both=False, max_years=None):
+    start, end = _d("start"), _d("end")
+    if require_both and not (start and end):
+        raise ValueError("start and end dates are required (YYYY-MM-DD)")
+    if bool(start) != bool(end):
+        raise ValueError("Provide both start and end dates, or neither.")
+    if start and start > end:
+        raise ValueError("start must not be after end")
+    if start and max_years and int(end[:4]) - int(start[:4]) + 1 > max_years:
+        raise ValueError(f"Date range cannot exceed {max_years} calendar years.")
+    return start, end
+
+
+def _year(value, name="year"):
+    raw = request.args.get(name, str(value))
+    try:
+        result = int(raw)
+    except (TypeError, ValueError) as ex:
+        raise ValueError(f"{name} must be a whole year from 1990 to 2100") from ex
+    if not 1990 <= result <= 2100:
+        raise ValueError(f"{name} must be a whole year from 1990 to 2100")
+    return result
+
+
+def _int_arg(name, default, lo, hi):
+    raw = request.args.get(name, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as ex:
+        raise ValueError(f"{name} must be a whole number from {lo} to {hi}") from ex
+    return min(max(value, lo), hi)
 
 
 @bp.app_errorhandler(ValueError)
@@ -63,12 +122,15 @@ def regions():
 def overview():
     scope, region = _scope_region()
     c, sc = db.connect(), db.scope_clause(scope)
-    rows = [dict(r) for r in c.execute(f"SELECT origin,sensor,satellite,COUNT(*) n,MIN(acq_date) first,MAX(acq_date) last,"
-                                       f"AVG(frp) frp_mean,MAX(frp) frp_max FROM satellite_observations WHERE {sc} GROUP BY origin,sensor,satellite")]
-    imps = [dict(r) for r in c.execute("SELECT * FROM data_imports ORDER BY id DESC LIMIT 30") if (r["origin"] == "demo") == (scope == "demo")][:8]
     reg = analytics.get_region(c, region)
+    spatial_args = analytics.box(reg)
+    rows = [dict(r) for r in c.execute(f"SELECT origin,sensor,satellite,COUNT(*) n,MIN(acq_date) first,MAX(acq_date) last,"
+                                       f"AVG(frp) frp_mean,MAX(frp) frp_max FROM satellite_observations WHERE {sc} "
+                                       "AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? GROUP BY origin,sensor,satellite", spatial_args)]
+    origin_filter = "origin='demo'" if scope == "demo" else "origin!='demo'"
+    imps = [dict(r) for r in c.execute(f"SELECT * FROM data_imports WHERE {origin_filter} ORDER BY id DESC LIMIT 8")]
     prov = [dict(r) for r in c.execute(f"SELECT s.origin origin,COUNT(*) links FROM observation_sources s JOIN satellite_observations o "
-                                       f"ON o.id=s.observation_id WHERE o.{sc} GROUP BY s.origin")]
+                                       f"ON o.id=s.observation_id WHERE o.{sc} AND o.lat BETWEEN ? AND ? AND o.lon BETWEEN ? AND ? GROUP BY s.origin", spatial_args)]
     out = {"scope": scope, "region": region, "provenance": prov, "by_source": rows, "total": sum(r["n"] for r in rows),
            "totals": {s: sum(r["n"] for r in rows if r["sensor"] == s) for s in ("MODIS", "VIIRS")},
            "coverage": analytics.coverage_ranges(c, scope, reg), "imports": imps,
@@ -90,19 +152,23 @@ def map_obs():
         except (TypeError, ValueError) as ex:
             raise ValueError(f"bbox must be four valid coordinates: {ex}") from ex
     q, a = f"{sc} AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?", [s, n, w, e]
-    if _d("start"):
-        q, a = q + " AND acq_date>=?", a + [request.args["start"]]
-    if _d("end"):
-        q, a = q + " AND acq_date<=?", a + [request.args["end"]]
-    sensors = [x for x in request.args.get("sensor", "MODIS,VIIRS").split(",") if x in ("MODIS", "VIIRS")] or ["MODIS", "VIIRS"]
+    start, end = _date_range()
+    if start:
+        q, a = q + " AND acq_date>=? AND acq_date<=?", a + [start, end]
+    raw_sensors = request.args.get("sensor", "MODIS,VIIRS").split(",")
+    sensors = [x.strip() for x in raw_sensors]
+    if not sensors or any(x not in ("MODIS", "VIIRS") for x in sensors):
+        raise ValueError("sensor must be a comma-separated list containing MODIS and/or VIIRS")
     q, a = q + f" AND sensor IN ({','.join('?' * len(sensors))})", a + sensors
     if request.args.get("satellite"):
         q, a = q + " AND satellite=?", a + [request.args["satellite"]]
-    limit = int(_num("limit", 5000, 100, 20000))
+    limit = _int_arg("limit", 5000, 100, 20000)
     total = c.execute(f"SELECT COUNT(*) FROM satellite_observations WHERE {q}", a).fetchone()[0]
     k = max(1, math.ceil(total / limit))  # uniform thinning by id, not deduplication
-    rows = c.execute(f"SELECT id,sensor,satellite,acq_utc,lat,lon,frp,confidence_raw,origin FROM satellite_observations WHERE {q}"
-                     f"{' AND id % ? = 0' if k > 1 else ''} LIMIT ?", a + ([k] if k > 1 else []) + [limit]).fetchall()
+    rows = c.execute(f"WITH matching AS (SELECT id,sensor,satellite,acq_utc,lat,lon,frp,confidence_raw,origin,"
+                     f"ROW_NUMBER() OVER (ORDER BY acq_utc,id) AS sample_n FROM satellite_observations WHERE {q}) "
+                     f"SELECT id,sensor,satellite,acq_utc,lat,lon,frp,confidence_raw,origin FROM matching "
+                     f"WHERE (sample_n - 1) % ? = 0 ORDER BY sample_n LIMIT ?", a + [k, limit]).fetchall()
     c.close()
     return jsonify({"scope": scope, "total_matching": total, "returned": len(rows), "thinned_every": k,
                     "observations": [dict(r) for r in rows]})
@@ -119,21 +185,44 @@ def api_import():
     if sensor not in (None, "MODIS", "VIIRS"):
         raise ValueError("sensor must be MODIS or VIIRS")
     cs, ce = request.form.get("coverage_start") or None, request.form.get("coverage_end") or None
-    for v in (cs, ce):
-        if v:
-            datetime.strptime(v, "%Y-%m-%d")
+    for label, value in (("coverage_start", cs), ("coverage_end", ce)):
+        if value:
+            try:
+                if date.fromisoformat(value).isoformat() != value:
+                    raise ValueError
+            except ValueError as ex:
+                raise ValueError(f"{label} must be a real date in YYYY-MM-DD format") from ex
     if bool(cs) != bool(ce):
         raise ValueError("Provide both coverage dates or neither.")
     if cs and cs > ce:
         raise ValueError("Coverage start must not be after coverage end.")
-    c = db.connect()
+    if not _IMPORT_SLOTS.acquire(blocking=False):
+        return jsonify({"error": "Two imports are already running. Wait for one to finish, then retry."}), 429
+    iid = None
     try:  # geographical extent is required and must be declared; it is never inferred from the detections
-        bbox, label = importer.resolve_extent(c, request.form.get("extent", ""), [request.form.get(k) for k in ("west", "south", "east", "north")])
+        safe_name = secure_filename(f.filename) or "archive-upload"
         content = f.read()
-        iid = importer.create_import(c, f.filename, "nasa_archive", bbox=bbox, extent_label=label)
-    finally:
-        c.close()
-    threading.Thread(target=importer.import_file, args=(f.filename, content, "nasa_archive", sensor, cs, ce, iid, bbox, label), daemon=True).start()
+        c = db.connect()
+        try:
+            bbox, label = importer.resolve_extent(c, request.form.get("extent", ""), [request.form.get(k) for k in ("west", "south", "east", "north")])
+            iid = importer.create_import(c, safe_name, "nasa_archive", bbox=bbox, extent_label=label)
+        finally:
+            c.close()
+        worker = threading.Thread(target=_background_import,
+                                  args=(safe_name, content, "nasa_archive", sensor, cs, ce, iid, bbox, label), daemon=True)
+        worker.start()
+    except Exception as ex:
+        _IMPORT_SLOTS.release()
+        if iid:
+            c = db.connect()
+            try:
+                c.execute("UPDATE data_imports SET status='error',error=?,finished_at=? WHERE id=?",
+                          ("Could not start import worker: " + str(ex)[:240], db.now(), iid))
+                c.commit()
+            finally:
+                c.close()
+            return jsonify({"error": "The upload was received, but its import worker could not start."}), 503
+        raise
     return jsonify({"import_id": iid}), 202
 
 
@@ -189,7 +278,7 @@ def observation_sources(oid):
 def nrt_refresh():
     if not KEY():
         return jsonify({"error": "FIRMS_MAP_KEY is not set on the server. Live NASA retrieval is unavailable."}), 400
-    days = int(_num("days", 3, 1, 5))
+    days = _int_arg("days", 3, 1, 5)
     res = importer.ingest_nrt(KEY(), days)
     failed = [r["source"] for r in res if r["status"] == "error"]
     return jsonify({"results": res, "retrieved_at": db.now(), "partial_failure": bool(failed), "failed_sources": failed,
@@ -223,7 +312,7 @@ def calendar():
     if metric not in ("modis", "viirs", "sum"):
         raise ValueError("metric must be modis, viirs or sum")
     c = db.connect()
-    r = analytics.calendar_view(c, scope, region, int(_num("year", date.today().year, 1990, 2100)), metric)
+    r = analytics.calendar_view(c, scope, region, _year(date.today().year), metric)
     c.close()
     return jsonify(r)
 
@@ -231,7 +320,15 @@ def calendar():
 @bp.route("/api/monthly")
 def monthly():
     scope, region = _scope_region()
-    years = [int(y) for y in request.args.get("years", str(date.today().year)).split(",") if y.strip().isdigit()]
+    raw_years = request.args.get("years", str(date.today().year))
+    try:
+        years = sorted({int(y.strip()) for y in raw_years.split(",")})
+    except ValueError as ex:
+        raise ValueError("years must be comma-separated whole years from 1990 to 2100") from ex
+    if not years or any(y < 1990 or y > 2100 for y in years):
+        raise ValueError("years must be comma-separated whole years from 1990 to 2100")
+    if len(years) > 20:
+        raise ValueError("Request no more than 20 years at a time")
     c = db.connect()
     r = analytics.monthly_view(c, scope, region, years)
     c.close()
@@ -245,7 +342,7 @@ def anomalies():
     if level not in ("monthly", "daily") or sensor not in ("MODIS", "VIIRS"):
         raise ValueError("level must be monthly|daily and sensor MODIS|VIIRS")
     c = db.connect()
-    r = analytics.anomalies(c, scope, region, sensor, level, int(_num("min_years", 3, 2, 20)))
+    r = analytics.anomalies(c, scope, region, sensor, level, _int_arg("min_years", 3, 2, 20))
     c.close()
     return jsonify(r)
 
@@ -253,11 +350,7 @@ def anomalies():
 @bp.post("/api/harmonize")
 def harmonize_run():
     scope, region = _scope_region()
-    start, end = _d("start"), _d("end")
-    if not (start and end):
-        raise ValueError("start and end dates are required (YYYY-MM-DD)")
-    if start > end:
-        raise ValueError("start must not be after end")
+    start, end = _date_range(require_both=True, max_years=50)
     c = db.connect()
     try:
         r = analytics.run_harmonization(c, scope, region, start, end, _num("dist", 1000, 100, 5000), _num("dt", 120, 0, 720))
@@ -269,11 +362,11 @@ def harmonize_run():
 @bp.route("/api/comparison")
 def comparison():
     scope, region = _scope_region()
-    start, end = _d("start"), _d("end")
+    start, end = _date_range(max_years=50)
     c, sc = db.connect(), db.scope_clause(scope)
     reg = analytics.get_region(c, region)
     q, a = f"{sc} AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?", list(analytics.box(reg))
-    if start and end:
+    if start:
         q, a = q + " AND acq_date BETWEEN ? AND ?", a + [start, end]
     daily = {}
     for r in c.execute(f"SELECT acq_date d,sensor s,COUNT(*) n FROM satellite_observations WHERE {q} GROUP BY d,s", a):
@@ -296,11 +389,11 @@ def comparison():
 @bp.route("/api/regions/summary")
 def regions_summary():
     scope, _ = _scope_region()
-    start, end = _d("start"), _d("end")
+    start, end = _date_range(max_years=50)
     c, sc, out = db.connect(), db.scope_clause(scope), []
     for reg in c.execute("SELECT * FROM regions").fetchall():
         q, a = f"{sc} AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?", list(analytics.box(reg))
-        if start and end:
+        if start:
             q, a = q + " AND acq_date BETWEEN ? AND ?", a + [start, end]
         cnt = {r["sensor"]: r["n"] for r in c.execute(f"SELECT sensor,COUNT(*) n FROM satellite_observations WHERE {q} GROUP BY sensor", a)}
         out.append({"id": reg["id"], "name": reg["name"], "modis": cnt.get("MODIS", 0), "viirs": cnt.get("VIIRS", 0)})
@@ -311,9 +404,10 @@ def regions_summary():
 @bp.route("/api/reports/export")
 def export():
     scope, region = _scope_region()
-    start, end, fmt = _d("start"), _d("end"), request.args.get("format", "csv")
-    if not (start and end):
-        raise ValueError("start and end dates are required")
+    start, end = _date_range(require_both=True, max_years=50)
+    fmt = request.args.get("format", "csv")
+    if fmt not in ("csv", "html"):
+        raise ValueError("format must be csv or html")
     c = db.connect()
     reg = analytics.get_region(c, region)
     spatial = "lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?"
@@ -328,9 +422,10 @@ def export():
     run = c.execute("SELECT * FROM processing_runs WHERE kind='harmonization' AND scope=? AND region_id=? "
                     "AND start_date<=? AND end_date>=? ORDER BY id DESC LIMIT 1", (scope, region, end, start)).fetchone()
     imports = []
+    import_scope = "origin='demo'" if scope == "demo" else "origin!='demo'"
     for im in c.execute("SELECT id,filename,source_name,origin,coverage_start,coverage_end,coverage_assumed,extent_label,bbox,started_at,finished_at "
-                        "FROM data_imports WHERE status='done' AND coverage_start<=? AND coverage_end>=? ORDER BY id", (end, start)):
-        if (im["origin"] == "demo") != (scope == "demo") or not im["bbox"]:
+                        f"FROM data_imports WHERE status='done' AND {import_scope} AND coverage_start<=? AND coverage_end>=? ORDER BY id", (end, start)):
+        if not im["bbox"]:
             continue
         west, south, east, north = json.loads(im["bbox"])
         if west <= reg["west"] and south <= reg["south"] and east >= reg["east"] and north >= reg["north"]:

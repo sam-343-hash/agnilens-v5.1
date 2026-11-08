@@ -193,6 +193,13 @@ def status():
         "peak": {"t": peak["t"], "risk": peak["risk"]}, "hours": hours})
 
 
+@app.errorhandler(413)
+def upload_too_large(_error):
+    limit_mib = app.config["MAX_CONTENT_LENGTH"] / (1024 * 1024)
+    limit = f"{limit_mib:g} MiB" if limit_mib >= 1 else f"{app.config['MAX_CONTENT_LENGTH']} bytes"
+    return jsonify({"error": f"Upload exceeds the configured limit ({limit})."}), 413
+
+
 
 PAGES = ["map", "harmonize", "calendar", "compare", "regional", "anomalies", "data", "reports", "experimental"]
 

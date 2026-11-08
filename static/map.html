@@ -1,15 +1,15 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgniLens · Map</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"><link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"><link rel="stylesheet" href="/shared.css"></head><body>
 <div class="wrap"><h1>Interactive fire map</h1><p class="muted">Each dot is one satellite detection. Up to 5,000 points are drawn; if more match, every Nth observation (by ID) is shown and the count is displayed. Nothing is merged or deduplicated by location.</p>
-<div class="card"><div class="row"><div><label>Start</label><input type="date" id="s"></div><div><label>End</label><input type="date" id="e"></div>
-<div><label>Satellite</label><select id="sat"><option value="">all</option></select></div>
+<div class="card"><div class="row"><div><label for="s">Start</label><input type="date" id="s"></div><div><label for="e">End</label><input type="date" id="e"></div>
+<div><label for="sat">Satellite</label><select id="sat"><option value="">all</option></select></div>
 <label style="color:var(--text)"><input type="checkbox" id="mo" checked> MODIS</label><label style="color:var(--text)"><input type="checkbox" id="vi" checked> VIIRS</label>
-<label style="color:var(--text)"><input type="checkbox" id="pt" checked> Points</label><label style="color:var(--text)"><input type="checkbox" id="cl"> Clusters</label><label style="color:var(--text)"><input type="checkbox" id="ht"> Heatmap</label><button id="go">Apply</button></div><div id="info" class="muted" style="margin-top:8px"></div></div>
-<div id="map"></div><p class="muted">Popup shows raw confidence (MODIS 0–100, VIIRS l/n/h; not equivalent) and FRP in MW. Candidate correspondence lines are in the <a href="/harmonize">Harmonization Studio</a>.</p><div id="empty"></div></div>
+<label style="color:var(--text)"><input type="checkbox" id="pt" checked> Points</label><label style="color:var(--text)"><input type="checkbox" id="cl"> Clusters</label><label style="color:var(--text)"><input type="checkbox" id="ht"> Heatmap</label><button id="go">Apply</button></div><div id="info" class="muted" role="status" aria-live="polite" style="margin-top:8px"></div></div>
+<div id="map" role="img" aria-label="Map of MODIS and VIIRS satellite detections"></div><p class="muted"><span style="color:#36BFFA">● MODIS</span> &nbsp; <span style="color:#FFB547">● VIIRS</span> &nbsp; Heatmap intensity uses FRP when available. Popup shows raw confidence (MODIS 0–100, VIIRS l/n/h; not equivalent) and FRP in MW. Candidate correspondence lines are in the <a href="/harmonize">Harmonization Studio</a>.</p><div id="empty"></div></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script><script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script><script src="/shared.js"></script><script>
-const map=L.map('map',{preferCanvas:true}).setView([30.4,75.6],7);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:12}).addTo(map);
+let map=null;if(typeof L!=='undefined'){map=L.map('map',{preferCanvas:true}).setView([30.4,75.6],7);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:12}).addTo(map)}else $('map').textContent='Map libraries are unavailable. Check your connection; the observation API is still available.';
 let layers=[];const COL={MODIS:'#36BFFA',VIIRS:'#FFB547'};
-async function go(){layers.forEach(l=>map.removeLayer(l));layers=[];
+async function go(){if(!map){$('info').textContent='Map libraries are unavailable. The map could not be drawn.';return}return withBusy($('go'),async()=>{try{layers.forEach(l=>map.removeLayer(l));layers=[];
  const sen=[$('mo').checked&&'MODIS',$('vi').checked&&'VIIRS'].filter(Boolean).join(',');if(!sen){$('info').textContent='Select at least one sensor.';return}
  const d=await api('/api/map/observations?'+qs({start:$('s').value,end:$('e').value,sensor:sen,satellite:$('sat').value,limit:5000}));
  $('info').textContent=d.total_matching.toLocaleString()+' detections match; showing '+d.returned.toLocaleString()+(d.thinned_every>1?' (every '+d.thinned_every+'th)':'')+'.';
@@ -17,7 +17,7 @@ async function go(){layers.forEach(l=>map.removeLayer(l));layers=[];
  if($('pt').checked){const g=L.layerGroup(d.observations.map(mk)).addTo(map);layers.push(g)}
  if($('cl').checked){const c=L.markerClusterGroup({chunkedLoading:true});d.observations.forEach(o=>c.addLayer(mk(o)));c.addTo(map);layers.push(c)}
  if($('ht').checked){const h=L.heatLayer(d.observations.map(o=>[o.lat,o.lon,Math.min(1,(o.frp||5)/40)]),{radius:14,blur:18}).addTo(map);layers.push(h)}
- if(d.observations.length)map.fitBounds(d.observations.map(o=>[o.lat,o.lon]),{maxZoom:9,padding:[20,20]})}
+ if(d.observations.length)map.fitBounds(d.observations.map(o=>[o.lat,o.lon]),{maxZoom:9,padding:[20,20]})}catch(e){$('info').textContent=e.message}})}
 shell().then(async()=>{const ov=await api('/api/overview?'+qs());if(!ov.total){$('empty').innerHTML=EMPTY;return}
  [...new Set(ov.by_source.map(r=>r.satellite))].forEach(s=>$('sat').insertAdjacentHTML('beforeend','<option>'+esc(s)+'</option>'));
  const last=ov.by_source.map(r=>r.last).sort().pop(),d=new Date(last+'T00:00:00Z');d.setUTCDate(d.getUTCDate()-7);$('e').value=last;$('s').value=d.toISOString().slice(0,10);$('go').onclick=go;go()});

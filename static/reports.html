@@ -1,9 +1,10 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgniLens · Reports</title><link rel="stylesheet" href="/shared.css"></head><body>
 <div class="wrap"><h1>Reports and export</h1><p class="muted">Every export states whether its data is NASA FIRMS or synthetic demonstration data. Days without loaded data are left blank, not written as zero.</p>
-<div class="card"><div class="row"><div><label>Start</label><input type="date" id="s"></div><div><label>End</label><input type="date" id="e"></div><a class="btn" id="csv" href="#">Download CSV</a><a class="btn sec" style="color:var(--text)" id="html" target="_blank" href="#">Open printable report</a></div>
+<div class="card"><div class="row"><div><label for="s">Start</label><input type="date" id="s"></div><div><label for="e">End</label><input type="date" id="e"></div><a class="btn" id="csv" href="#">Download CSV</a><a class="btn sec" style="color:var(--text)" id="html" target="_blank" rel="noopener" href="#">Open printable report</a></div><p id="msg" class="muted" role="status" aria-live="polite"></p>
 <p class="muted">PDF: open the printable report and use your browser’s Print → Save as PDF.</p></div></div>
 <script src="/shared.js"></script><script>
-function upd(){const q=qs({start:$('s').value,end:$('e').value});$('csv').href='/api/reports/export?'+q+'&format=csv';$('html').href='/api/reports/export?'+q+'&format=html'}
-shell().then(async()=>{const ov=await api('/api/overview?'+qs());if(ov.total){$('s').value=ov.by_source.map(r=>r.first).sort()[0];$('e').value=ov.by_source.map(r=>r.last).sort().pop()}
- $('s').onchange=$('e').onchange=upd;upd()});
+function upd(){const s=$('s').value,e=$('e').value,ok=!!(s&&e&&s<=e);$('csv').href=ok?'/api/reports/export?'+qs({start:s,end:e})+'&format=csv':'#';$('html').href=ok?'/api/reports/export?'+qs({start:s,end:e})+'&format=html':'#';[$('csv'),$('html')].forEach(a=>{a.setAttribute('aria-disabled',String(!ok));a.tabIndex=ok?0:-1});$('msg').textContent=!s||!e?'Choose a start and end date to enable exports.':s>e?'Start date must not be after end date.':''}
+['csv','html'].forEach(id=>$(id).onclick=e=>{if($(id).getAttribute('aria-disabled')==='true')e.preventDefault()});
+shell().then(async()=>{const ov=await api('/api/overview?'+qs());if(ov.total){$('s').value=ov.by_source.map(r=>r.first).sort()[0];$('e').value=ov.by_source.map(r=>r.last).sort().pop()}else $('msg').textContent='No observations are loaded in this scope and region yet. You can still export a date range to record no-data states.'
+ $('s').onchange=$('e').onchange=upd;upd()}).catch(e=>$('msg').textContent=e.message);
 </script></body></html>
