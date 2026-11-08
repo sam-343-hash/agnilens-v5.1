@@ -1,0 +1,39 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgniLens · Historical Fire Calendar</title><link rel="stylesheet" href="/shared.css">
+<style>.legend span{display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:.8rem;color:var(--muted)}.legend i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid var(--line)}
+.two{display:grid;grid-template-columns:1fr 320px;gap:16px}@media(max-width:900px){.two{grid-template-columns:1fr}}svg rect{cursor:pointer}</style></head><body>
+<div class="wrap"><h1>Historical Fire Calendar</h1>
+<p class="muted">Each square is one UTC day. Colour shows the number of satellite detections (not individual fires), ranked within the selected year. Days with no data loaded are hatched, never drawn as zero.</p>
+<div class="card"><div class="row"><div><label>Year</label><select id="year"></select></div><div><label>Intensity based on</label><select id="metric"><option value="viirs">VIIRS detections</option><option value="modis">MODIS detections</option><option value="sum">MODIS + VIIRS raw detections (both must have data)</option></select></div>
+<div><label>Month detail</label><select id="month"></select></div></div></div>
+<div id="out"></div></div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script><script src="/shared.js"></script><script>
+const COL=['#16304a','#7c4a03','#c26a0a','#ee5a24','#ff2d2d'];let CAL=null;
+const f1=v=>v==null?'–':(+v).toFixed(1);
+const cnt=s=>s.status==='no_data'?'no data':s.status==='assumed_coverage'?'0 (assumed)':s.count;
+const sd=s=>s.status==='no_data'?'no data loaded':s.status==='assumed_coverage'?'0 detections, coverage only assumed (zero not confirmed)':s.status==='confirmed_zero'?'0 detections (coverage confirmed)':s.count+' detections · FRP mean '+f1(s.frp_mean)+' / max '+f1(s.frp_max)+' MW';
+function detail(d){$('det').innerHTML='<b>'+d.date+'</b><p>MODIS: '+sd(d.modis)+'<br>VIIRS: '+sd(d.viirs)+'<br>Candidate correspondence groups: '+(d.candidate_groups==null?'not computed (run Harmonization Studio)':d.candidate_groups+' ('+d.candidate_pairs+' pairs)')+'</p><p class="muted">FRP is shown per sensor; MODIS and VIIRS FRP are not merged.</p>'}
+function draw(){const days=CAL.days,off=new Date(days[0].date+'T00:00:00Z').getUTCDay(),W=Math.ceil((days.length+off)/7);
+ let s='<svg viewBox="0 0 '+(W*17+30)+' 140" width="100%"><defs><pattern id="a" width="5" height="5" patternUnits="userSpaceOnUse"><rect width="5" height="5" fill="#2a2412"/><circle cx="2.5" cy="2.5" r="1.1" fill="#FFB547"/></pattern><pattern id="h" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#0b1220"/><line x1="0" y1="0" x2="0" y2="4" stroke="#33445f" stroke-width="1.5"/></pattern></defs>';
+ ['Mon','Wed','Fri'].forEach((n,i)=>s+='<text x="0" y="'+(30+i*34)+'" font-size="8" fill="#9AA9BC">'+n+'</text>');
+ days.forEach((d,i)=>{const k=i+off,x=26+Math.floor(k/7)*17,y=18+(k%7)*16,fill=d.level==null?(d.value_state==='assumed_coverage'?'url(#a)':'url(#h)'):COL[d.level];
+  if(d.date.endsWith('-01'))s+='<text x="'+x+'" y="10" font-size="8" fill="#9AA9BC">'+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+d.date.slice(5,7)-1]+'</text>';
+  s+='<rect data-i="'+i+'" x="'+x+'" y="'+y+'" width="13" height="13" rx="2" fill="'+fill+'" stroke="#22324a" stroke-width=".5"><title>'+d.date+'</title></rect>'});
+ $('cal').innerHTML=s+'</svg>';$('cal').querySelectorAll('rect[data-i]').forEach(r=>r.onclick=()=>detail(days[r.dataset.i]))}
+function monthTable(){const m=$('month').value;if(!m){$('mt').innerHTML='';return}
+ $('mt').innerHTML='<tr><th>Date</th><th>MODIS</th><th>MODIS FRP mean/max</th><th>VIIRS</th><th>VIIRS FRP mean/max</th><th>Groups</th></tr>'+CAL.days.filter(d=>d.date.slice(5,7)===m).map(d=>'<tr><td>'+d.date+'</td><td>'+cnt(d.modis)+'</td><td>'+f1(d.modis.frp_mean)+' / '+f1(d.modis.frp_max)+'</td><td>'+cnt(d.viirs)+'</td><td>'+f1(d.viirs.frp_mean)+' / '+f1(d.viirs.frp_max)+'</td><td>'+(d.candidate_groups??'–')+'</td></tr>').join('')}
+let chart;async function multi(){const ys=[...document.querySelectorAll('.yc:checked')].map(c=>c.value);if(!ys.length)return;
+ const m=(await api('/api/monthly?'+qs({years:ys.join(',')}))).months,sen=$('metric').value==='modis'?'modis':'viirs';
+ if(chart)chart.destroy();chart=new Chart($('mc'),{type:'line',data:{labels:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],datasets:ys.map((y,i)=>({label:y,spanGaps:false,tension:.25,borderColor:['#36BFFA','#22D3A6','#FFB547','#FF5B5B','#b794f6','#f472b6','#94a3b8'][i%7],data:m.filter(x=>x.month.startsWith(y)).map(x=>x[sen].coverage>=.8?x[sen].count:null)}))},
+  options:{plugins:{legend:{labels:{color:'#F4F7FB'}}},scales:{x:{ticks:{color:'#9AA9BC'}},y:{ticks:{color:'#9AA9BC'},title:{display:true,text:sen.toUpperCase()+' detections per month',color:'#9AA9BC'}}}}})}
+async function load(){CAL=await api('/api/calendar?'+qs({year:$('year').value,metric:$('metric').value}));
+ const c=CAL.coverage_summary,wn=CAL.warnings.length?'<p style="color:var(--warn)"><b>Warning:</b> '+CAL.warnings.map(esc).join(' ')+' Declare coverage dates on import to confirm.</p>':'';
+ $('out').innerHTML='<div class="two"><div class="card"><h2>'+CAL.year+'</h2><div id="cal" style="overflow-x:auto"></div><div class="legend" style="margin-top:8px"><span><i style="background:#16304a"></i>zero detections (data loaded)</span><span><i style="background:#7c4a03"></i>low</span><span><i style="background:#c26a0a"></i></span><span><i style="background:#ee5a24"></i></span><span><i style="background:#ff2d2d"></i>high</span><span><i style="background:repeating-linear-gradient(45deg,#0b1220,#0b1220 3px,#33445f 3px,#33445f 4px)"></i>no data loaded</span><span><i style="background:radial-gradient(#FFB547 30%,#2a2412 32%)"></i>assumed coverage (zero not confirmed)</span></div>'+
+ wn+'<p class="muted">Days with confirmed coverage: MODIS '+c.MODIS.confirmed+', VIIRS '+c.VIIRS.confirmed+'; assumed only: MODIS '+c.MODIS.assumed+', VIIRS '+c.VIIRS.assumed+' (of '+CAL.days.length+'). Level thresholds (detections): '+(CAL.thresholds.length?'>'+CAL.thresholds.join(', >'):'none')+'.</p></div><div class="card" id="det"><b>Select a day</b><p class="muted">Click any square for sensor-level details.</p></div></div>'+
+ '<div class="card"><h2>Compare years (monthly, months with ≥80% data coverage)</h2><div id="yrs" class="row" style="margin-bottom:8px"></div><canvas id="mc" height="90"></canvas></div><div class="card"><h2>Daily detail</h2><div style="overflow-x:auto;max-height:420px"><table id="mt"></table></div></div>';
+ const ov=await api('/api/overview?'+qs());$('yrs').innerHTML=ov.years.map(y=>'<label style="display:flex;gap:4px;align-items:center;color:var(--text)"><input type="checkbox" class="yc" value="'+y+'" '+(ov.years.slice(-4).includes(y)?'checked':'')+'>'+y+'</label>').join('');
+ document.querySelectorAll('.yc').forEach(c=>c.onchange=multi);draw();monthTable();multi()}
+shell().then(async()=>{const ov=await api('/api/overview?'+qs());if(!ov.total){$('out').innerHTML=EMPTY;return}
+ $('year').innerHTML=ov.years.map(y=>'<option>'+y+'</option>').join('');$('year').value=ov.years[ov.years.length-1];
+ $('month').innerHTML='<option value="">choose…</option>'+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m,i)=>'<option value="'+String(i+1).padStart(2,'0')+'">'+m+'</option>').join('');
+ $('year').onchange=$('metric').onchange=load;$('month').onchange=()=>monthTable();load()}).catch(e=>$('out').innerHTML='<p class="err">'+esc(e.message)+'</p>');
+</script></body></html>

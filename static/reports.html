@@ -1,0 +1,9 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgniLens · Reports</title><link rel="stylesheet" href="/shared.css"></head><body>
+<div class="wrap"><h1>Reports and export</h1><p class="muted">Every export states whether its data is NASA FIRMS or synthetic demonstration data. Days without loaded data are left blank, not written as zero.</p>
+<div class="card"><div class="row"><div><label>Start</label><input type="date" id="s"></div><div><label>End</label><input type="date" id="e"></div><a class="btn" id="csv" href="#">Download CSV</a><a class="btn sec" style="color:var(--text)" id="html" target="_blank" href="#">Open printable report</a></div>
+<p class="muted">PDF: open the printable report and use your browser’s Print → Save as PDF.</p></div></div>
+<script src="/shared.js"></script><script>
+function upd(){const q=qs({start:$('s').value,end:$('e').value});$('csv').href='/api/reports/export?'+q+'&format=csv';$('html').href='/api/reports/export?'+q+'&format=html'}
+shell().then(async()=>{const ov=await api('/api/overview?'+qs());if(ov.total){$('s').value=ov.by_source.map(r=>r.first).sort()[0];$('e').value=ov.by_source.map(r=>r.last).sort().pop()}
+ $('s').onchange=$('e').onchange=upd;upd()});
+</script></body></html>

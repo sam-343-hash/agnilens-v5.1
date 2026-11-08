@@ -1,0 +1,30 @@
+:root{--bg:#070B14;--bg2:#0E1625;--card:#121F30;--blue:#36BFFA;--green:#22D3A6;--warn:#FFB547;--red:#FF5B5B;--text:#F4F7FB;--muted:#9AA9BC;--line:#22324a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5}
+a{color:var(--blue)}
+.nav{position:sticky;top:0;z-index:1000;background:rgba(7,11,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.nav .in{max-width:1220px;margin:auto;padding:10px 20px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.brand{font-weight:800;font-size:1.15rem;margin-right:12px;color:var(--text);text-decoration:none}.brand span{color:var(--blue)}
+.nav a.l{color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:8px;font-size:.9rem}
+.nav a.l:hover{background:var(--bg2);color:var(--text)}.nav a.l.on{background:var(--card);color:var(--blue)}
+.nav .sp{flex:1}.nav select{background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px}
+#banner{padding:8px 20px;font-size:.9rem;text-align:center}
+.b-nasa{background:#0d3b33;color:var(--green)}.b-demo{background:#4a3410;color:var(--warn);font-weight:600}
+.wrap{max-width:1220px;margin:auto;padding:22px 20px 60px}
+h1{font-size:1.7rem;margin:.1em 0}h2{font-size:1.1rem;margin:0 0 8px}
+.muted{color:var(--muted);font-size:.9rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.stat b{display:block;font-size:1.7rem}.stat small{color:var(--muted)}
+button,.btn{background:var(--blue);color:#04202e;border:0;border-radius:8px;padding:9px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block;font-size:.9rem}
+button.sec{background:var(--bg2);color:var(--text);border:1px solid var(--line)}
+button:disabled{opacity:.5}
+input,select{background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px}
+label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:2px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+table{width:100%;border-collapse:collapse;font-size:.88rem}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
+.chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.75rem;font-weight:600}
+.c-nasa{background:#0d3b33;color:var(--green)}.c-demo{background:#4a3410;color:var(--warn)}.c-err{background:#4a1a1a;color:var(--red)}.c-run{background:#10324a;color:var(--blue)}
+#map{height:560px;border-radius:12px;border:1px solid var(--line)}
+.err{color:var(--red)}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}

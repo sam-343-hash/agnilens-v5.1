@@ -1,0 +1,15 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgniLens · Regional Intelligence</title><link rel="stylesheet" href="/shared.css"></head><body>
+<div class="wrap"><h1>Regional intelligence</h1><p class="muted">Statements below are generated only from stored observations and the baseline method on the Anomalies page.</p>
+<div class="card"><div class="row"><div><label>Start</label><input type="date" id="s"></div><div><label>End</label><input type="date" id="e"></div><button id="go">Update</button></div></div><div id="out"></div></div>
+<script src="/shared.js"></script><script>
+async function go(){const r=await api('/api/regions/summary?'+qs({start:$('s').value,end:$('e').value})),mx=Math.max(1,...r.regions.map(x=>x.viirs));
+ const reg=r.regions.find(x=>x.id===S.region),top=r.regions[0];
+ let sents='<li>'+(top.viirs? esc(top.name)+' has the most VIIRS detections in this period ('+top.viirs.toLocaleString()+').':'No VIIRS detections are stored for this period.')+'</li>';
+ try{const a=await api('/api/anomalies?'+qs({sensor:'VIIRS',level:'monthly'}));
+  if(a.status==='ok'){const f=a.anomalies.filter(x=>x.month>=$('s').value.slice(0,7)&&x.month<=$('e').value.slice(0,7));
+   sents+=f.length?f.map(x=>'<li>'+esc(a.region)+': VIIRS activity in '+x.month+' was '+x.direction+' its historical baseline (observed '+x.observed+', median '+x.baseline.median+' across '+x.baseline.n+' comparable months).</li>').join(''):'<li>No unusual VIIRS monthly activity was flagged for '+esc(a.region)+' in this period.</li>'}
+  else sents+='<li>'+esc(a.message||'Baseline comparison is not available for this region.')+'</li>'}catch(e){}
+ $('out').innerHTML='<div class="card"><h2>Summary</h2><ul>'+sents+'</ul></div><div class="card"><h2>Region ranking (detections in period)</h2><table><tr><th>Region (approximate box)</th><th>MODIS</th><th>VIIRS</th><th></th></tr>'+r.regions.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+x.modis.toLocaleString()+'</td><td>'+x.viirs.toLocaleString()+'</td><td style="width:35%"><div style="height:10px;border-radius:5px;background:#FFB547;width:'+(x.viirs/mx*100)+'%"></div></td></tr>').join('')+'</table><p class="muted">Regions overlap (Punjab and Haryana sit inside the study area and India box), so rows must not be added together. Detection counts are not fire counts.</p></div>'}
+shell().then(async()=>{const ov=await api('/api/overview?'+qs());if(!ov.total){$('out').innerHTML=EMPTY;return}
+ $('s').value=ov.by_source.map(r=>r.first).sort()[0];$('e').value=ov.by_source.map(r=>r.last).sort().pop();$('go').onclick=go;go()});
+</script></body></html>

@@ -1,0 +1,20 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgniLens</title>
+<link rel="stylesheet" href="/shared.css"><style>.hero{padding:34px 0 10px}.hero h1{font-size:2.4rem}.tag{color:var(--blue);font-weight:600}
+.pill{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}</style></head><body>
+<div class="wrap"><div class="hero"><div class="tag">NASA Space Apps Challenge 2026 · Harmonization of MODIS and VIIRS Hot Spots</div>
+<h1>Agni<span style="color:var(--blue)">Lens</span>: Unified Satellite Fire Intelligence</h1>
+<p class="muted" style="max-width:70ch">One Earth. Two Satellite Systems. One Unified Fire Intelligence Platform. AgniLens brings MODIS and VIIRS active-fire detections into one place, matches them as candidate correspondences in space and time, and shows historical activity without mistaking detection counts for individual fires.</p>
+<div class="pill"><a class="btn" href="/harmonize">Open Harmonization Studio</a><a class="btn sec" style="color:var(--text)" href="/calendar">Historical Fire Calendar</a><a class="btn sec" style="color:var(--text)" href="/data">Import data</a></div></div>
+<div id="content"></div></div>
+<script src="/shared.js"></script><script>
+shell().then(async()=>{const d=await api('/api/overview?'+qs());
+if(!d.total){$('content').innerHTML=EMPTY;return}
+const cov=s=>d.coverage[s].length?d.coverage[s].map(r=>r[0]+' to '+r[1]+(r[2]?'':' (assumed)')).join('; '):'none loaded';
+$('content').innerHTML='<div class="card"><div class="grid"><div class="stat"><b>'+d.totals.MODIS.toLocaleString()+'</b><small>MODIS detections</small></div>'+
+'<div class="stat"><b>'+d.totals.VIIRS.toLocaleString()+'</b><small>VIIRS detections</small></div><div class="stat"><b>'+d.by_source.length+'</b><small>sensor/satellite sources</small></div>'+
+'<div class="stat"><b>'+d.years.length+'</b><small>calendar years with data</small></div></div><p class="muted">Counts are satellite detections, not numbers of individual fires.</p></div>'+
+'<div class="card"><h2>Sources and provenance</h2><table><tr><th>Origin</th><th>Sensor</th><th>Satellite</th><th>Detections</th><th>First</th><th>Last</th><th>FRP mean / max (MW, per sensor)</th></tr>'+
+d.by_source.map(r=>'<tr><td>'+chip(r.origin)+'</td><td>'+r.sensor+'</td><td>'+esc(r.satellite)+'</td><td>'+r.n.toLocaleString()+'</td><td>'+r.first+'</td><td>'+r.last+'</td><td>'+(r.frp_mean==null?'–':r.frp_mean.toFixed(1))+' / '+(r.frp_max??'–')+'</td></tr>').join('')+'</table></div>'+
+'<div class="card"><h2>Data availability for the selected region</h2><p class="muted">MODIS: '+cov('MODIS')+'<br>VIIRS: '+cov('VIIRS')+'<br>Days outside these ranges are shown as “no data”, never as zero. Ranges marked (assumed) are not confirmed coverage: zero detections there are not treated as confirmed zero and are excluded from anomaly baselines. Observation source links by origin: '+(d.provenance.map(p=>p.origin+' '+p.links.toLocaleString()).join(', ')||'none')+'. A detection reported by several sources is counted once.</p></div>';
+}).catch(e=>$('content').innerHTML='<p class="err">'+esc(e.message)+'</p>');
+</script></body></html>
